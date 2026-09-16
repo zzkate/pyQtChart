@@ -1,10 +1,15 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Sequence
-
-from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtCore import (
+    QEasingCurve,
+    QTimer,
+    QVariantAnimation,
+    Qt,
+    QPointF,
+    QRectF,
+)
 from PySide6.QtGui import (
     QColor,
     QBrush,
@@ -44,6 +49,7 @@ class MixedTimeSeriesChart(QWidget):
 
     COST_COLOR = QColor("#F7E98B")
     COST_BORDER_COLOR = QColor("#E4D675")
+    COST_BORDER_HOVER_COLOR = QColor("#FFF4B7")
 
     CPA_COLOR = QColor("#326BE5")
     CPA_BORDER_COLOR = QColor("#2457C2")
@@ -56,9 +62,14 @@ class MixedTimeSeriesChart(QWidget):
     PLOT_BORDER_COLOR = QColor("#B8B8B8")
 
     SIDEBAR_BACKGROUND_COLOR = QColor("#F7DDE2")
-    SIDEBAR_TITLE_BACKGROUND = QColor("#FFFFFF")
-    SIDEBAR_CELL_WHITE = QColor("#FAFAFA")
-    SIDEBAR_CELL_PINK = QColor("#F7E5E8")
+    SIDEBAR_TITLE_BACKGROUND = QColor("#FDFDFD")
+
+    # Серый фон для «белых» ячеек под Tdy.
+    # Он заметно темнее чистого белого.
+    SIDEBAR_CELL_WHITE = QColor("#F0F0F0")
+
+    # Розовые ячейки совпадают с основным фоном.
+    SIDEBAR_CELL_PINK = QColor("#F9DFE4")
     SIDEBAR_TEXT_COLOR = QColor("#6A6A6A")
     SIDEBAR_TITLE_COLOR = QColor("#212121")
     SIDEBAR_SEPARATOR_COLOR = QColor("#E9E4E5")
@@ -68,17 +79,13 @@ class MixedTimeSeriesChart(QWidget):
     TOOLTIP_TEXT_COLOR = QColor("#303030")
     TOOLTIP_SHADOW_COLOR = QColor(0, 0, 0, 55)
 
-    EDIT_BUTTON_BACKGROUND = QColor("#FFFFFF")
-    EDIT_BUTTON_BORDER = QColor("#E2E2E2")
-    EDIT_BUTTON_ICON_COLOR = QColor("#5E5E5E")
-    EDIT_BUTTON_ARROW_COLOR = QColor("#666666")
-
     HOVER_HALO_ALPHA = 80
 
     ROI_HOVER_HALO_RADIUS = 12.0
     CONVERSIONS_HOVER_HALO_RADIUS = 15.0
 
-    HOVER_WHITE_CIRCLE_RADIUS = 6.0
+    HOVER_WHITE_CIRCLE_RADIUS = 4.0
+    HOVER_WHITE_CIRCLE_RADIUS2 = 5.0
     HOVER_WHITE_CIRCLE_BORDER_WIDTH = 1.2
 
     ROI_INNER_DIAMOND_RADIUS = 3.4
@@ -113,10 +120,43 @@ class MixedTimeSeriesChart(QWidget):
         self.bar_data = self._normalize(bar_data)
 
         self._validate()
+        self._background_color = QColor("#F9DFE4")
+
+        # Начальное, светлое состояние.
+        # ChartPanel меняет их через set_surface_color().
+        self._background_color = QColor("#FCECEF")
+        self._plot_background_color = QColor("#FCECEF")
+        self._sidebar_pink_color = QColor("#FCECEF")
 
         self._plot_rect = QRectF()
         self._hover_index = -1
-        self._edit_button_rect = QRectF()
+        self._is_cost_area_hovered = False
+
+        # Текущая толщина линии ROI Confirmed.
+        self._spline_width = 1.0
+
+        # False: линия 1 px.
+        # True: линия 2 px.
+        self._spline_is_thick = False
+
+        # Каждые 10 секунд запускаем плавное изменение толщины.
+        self._spline_change_timer = QTimer(self)
+        self._spline_change_timer.setInterval(2_000)
+        self._spline_change_timer.timeout.connect(
+            self._toggle_spline_thickness
+        )
+        self._spline_change_timer.start()
+
+        # Анимация самого изменения: 1 px <-> 2 px.
+        self._spline_animation = QVariantAnimation(self)
+        self._spline_animation.setDuration(1_000)
+        self._spline_animation.setEasingCurve(
+            QEasingCurve.Type.InOutSine
+        )
+
+        self._spline_animation.valueChanged.connect(
+            self._set_animated_spline_width
+        )
 
     @staticmethod
     def _normalize(
@@ -180,6 +220,67 @@ class MixedTimeSeriesChart(QWidget):
         self._validate()
 
         self._hover_index = -1
+        self.update()
+
+    def set_surface_color(self, color: str) -> None:
+        """
+        Меняет все розовые поверхности дочернего графика:
+
+        - фон виджета;
+        - фон plot area внутри рамки;
+        - розовые ячейки левой панели.
+
+        Белые ячейки и белый tooltip не меняются.
+        """
+        new_color = QColor(color)
+
+        self._background_color = new_color
+        self._plot_background_color = new_color
+        self._sidebar_pink_color = new_color
+
+        self.update()
+
+    def set_background_color(self, color: str) -> None:
+        """
+        Устанавливает цвет фона всего дочернего графика.
+
+        color:
+            Строка Qt QColor, например '#F9DFE4'.
+        """
+        self._background_color = QColor(color)
+        self.update()
+
+    def _toggle_spline_thickness(self) -> None:
+        """
+        Каждые 10 секунд меняет целевую толщину линии:
+
+        1 px -> 2 px
+        2 px -> 1 px
+
+        Сам переход выполняется плавно за 500 мс.
+        """
+        start_width = self._spline_width
+
+        if self._spline_is_thick:
+            target_width = 1.0
+        else:
+            target_width = 2.0
+
+        self._spline_is_thick = not self._spline_is_thick
+
+        self._spline_animation.stop()
+        self._spline_animation.setStartValue(start_width)
+        self._spline_animation.setEndValue(target_width)
+        self._spline_animation.start()
+
+    def _set_animated_spline_width(self, value) -> None:
+        """
+        QVariantAnimation передаёт промежуточные значения толщины.
+
+        update() заставляет QWidget вызвать paintEvent(),
+        где QPen получает новое значение ширины.
+        """
+        self._spline_width = float(value)
         self.update()
 
     def _sidebar_rect(self) -> QRectF:
@@ -278,7 +379,7 @@ class MixedTimeSeriesChart(QWidget):
 
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            painter.fillRect(self.rect(), self.BACKGROUND_COLOR)
+            painter.fillRect(self.rect(), self._background_color)
 
             self._plot_rect = self._plot_area()
             low, high = self._range_y()
@@ -295,8 +396,6 @@ class MixedTimeSeriesChart(QWidget):
             self._draw_cpa_bars(painter, bar_points, low, high)
             self._draw_roi_spline(painter, spline_points)
             self._draw_conversions_line(painter, line_points)
-
-            self._draw_edit_button(painter)
 
             if self._hover_index >= 0:
                 self._draw_area_hover_marker(painter, area_points)
@@ -328,7 +427,10 @@ class MixedTimeSeriesChart(QWidget):
         sidebar = self._sidebar_rect()
 
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(self.SIDEBAR_BACKGROUND_COLOR))
+
+        # Верхняя и нижняя свободные области сайдбара
+        # используют тот же цвет, что и весь розовый фон графика.
+        painter.setBrush(QBrush(self._sidebar_pink_color))
         painter.drawRect(sidebar)
 
         x = sidebar.left()
@@ -350,8 +452,8 @@ class MixedTimeSeriesChart(QWidget):
         painter.setFont(title_font)
 
         painter.drawText(
-            title_rect.adjusted(7.0, 0.0, -7.0, 0.0),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            title_rect.adjusted(0.0, -1.0, 0.0, 0.0),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
             "Tdy",
         )
 
@@ -373,7 +475,7 @@ class MixedTimeSeriesChart(QWidget):
             background = (
                 self.SIDEBAR_CELL_WHITE
                 if index % 2 == 0
-                else self.SIDEBAR_CELL_PINK
+                else self._sidebar_pink_color
             )
 
             painter.setPen(Qt.PenStyle.NoPen)
@@ -401,38 +503,119 @@ class MixedTimeSeriesChart(QWidget):
         painter.save()
 
         painter.setPen(QPen(self.PLOT_BORDER_COLOR, 1))
-        painter.setBrush(QBrush(self.PLOT_BACKGROUND_COLOR))
+        painter.setBrush(QBrush(self._plot_background_color))
         painter.drawRect(self._plot_rect)
 
         painter.restore()
 
-    def _draw_cost_area(
-        self,
-        painter: QPainter,
-        points: list[QPointF],
-    ) -> None:
-        if len(points) < 2:
-            return
+    def _cost_area_path(
+            self,
+            points: list[QPointF],
+    ) -> QPainterPath:
+        """
+        Создаёт замкнутый путь жёлтой Cost-area.
 
-        painter.save()
-
+        Тот же path используется:
+        - для отрисовки area;
+        - для проверки hover курсора внутри area.
+        """
         path = QPainterPath()
+
+        if len(points) < 2:
+            return path
+
         path.moveTo(points[0])
 
         for point in points[1:]:
             path.lineTo(point)
 
         path.lineTo(
-            QPointF(points[-1].x(), self._plot_rect.bottom())
+            QPointF(
+                points[-1].x(),
+                self._plot_rect.bottom(),
+            )
         )
         path.lineTo(
-            QPointF(points[0].x(), self._plot_rect.bottom())
+            QPointF(
+                points[0].x(),
+                self._plot_rect.bottom(),
+            )
         )
         path.closeSubpath()
 
-        painter.setPen(QPen(self.COST_BORDER_COLOR, 1.4))
+        return path
+
+    def _draw_cost_area(
+            self,
+            painter: QPainter,
+            points: list[QPointF],
+    ) -> None:
+        """
+        Рисует Cost area:
+
+        - жёлтая полупрозрачная заливка до нижней границы plot area;
+        - border только по верхней линии данных;
+        - без border слева, справа и снизу.
+        """
+        if len(points) < 2:
+            return
+
+        painter.save()
+
+        # Закрытый path применяется только для заливки.
+        fill_path = QPainterPath()
+        fill_path.moveTo(points[0])
+
+        for point in points[1:]:
+            fill_path.lineTo(point)
+
+        fill_path.lineTo(
+            QPointF(
+                points[-1].x(),
+                self._plot_rect.bottom(),
+            )
+        )
+
+        fill_path.lineTo(
+            QPointF(
+                points[0].x(),
+                self._plot_rect.bottom(),
+            )
+        )
+
+        fill_path.closeSubpath()
+
+        # Нет pen: заливка не получит границу по бокам и снизу.
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(QColor(247, 233, 139, 115)))
-        painter.drawPath(path)
+        painter.drawPath(fill_path)
+
+        # Отдельный открытый path только для верхней границы Cost.
+        top_border_path = QPainterPath()
+        top_border_path.moveTo(points[0])
+
+        for point in points[1:]:
+            top_border_path.lineTo(point)
+
+        border_color = (
+            self.COST_BORDER_HOVER_COLOR
+            if self._is_cost_area_hovered
+            else self.COST_BORDER_COLOR
+        )
+
+        border_width = (
+            1.8
+            if self._is_cost_area_hovered
+            else 1.4
+        )
+
+        border_pen = QPen(border_color, border_width)
+        border_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        border_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+
+        painter.setPen(border_pen)
+        painter.setBrush(QBrush())
+        painter.drawPath(top_border_path)
 
         painter.restore()
 
@@ -494,9 +677,9 @@ class MixedTimeSeriesChart(QWidget):
         painter.restore()
 
     def _draw_roi_spline(
-        self,
-        painter: QPainter,
-        points: list[QPointF],
+            self,
+            painter: QPainter,
+            points: list[QPointF],
     ) -> None:
         if len(points) < 2:
             return
@@ -509,6 +692,7 @@ class MixedTimeSeriesChart(QWidget):
         for index in range(len(points) - 1):
             current = points[index]
             next_point = points[index + 1]
+
             dx = next_point.x() - current.x()
 
             control_1 = QPointF(
@@ -527,7 +711,9 @@ class MixedTimeSeriesChart(QWidget):
                 next_point,
             )
 
-        pen = QPen(self.ROI_COLOR, 2.2)
+        # Толщина изменяется плавно:
+        # 1 px -> 2 px за 10 секунд -> 1 px за следующие 10 секунд.
+        pen = QPen(self.ROI_COLOR, self._spline_width)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
 
@@ -538,10 +724,17 @@ class MixedTimeSeriesChart(QWidget):
         painter.restore()
 
     def _draw_conversions_line(
-        self,
-        painter: QPainter,
-        points: list[QPointF],
+            self,
+            painter: QPainter,
+            points: list[QPointF],
     ) -> None:
+        """
+        Рисует фиолетовую линию Covertions и квадратные маркеры.
+
+        В активной hover-точке обычный квадрат не рисуется:
+        вместо него позже рисуется специальный marker
+        с белой обводкой в _draw_line_hover_marker().
+        """
         if len(points) < 2:
             return
 
@@ -566,7 +759,11 @@ class MixedTimeSeriesChart(QWidget):
         painter.setPen(QPen(self.CONVERSIONS_COLOR, 1))
         painter.setBrush(QBrush(self.CONVERSIONS_COLOR))
 
-        for point in points:
+        for index, point in enumerate(points):
+            # Убираем обычный фиолетовый квадрат под hover-маркером.
+            if index == self._hover_index:
+                continue
+
             painter.drawRect(
                 QRectF(
                     point.x() - marker_size / 2.0,
@@ -575,87 +772,6 @@ class MixedTimeSeriesChart(QWidget):
                     marker_size,
                 )
             )
-
-        painter.restore()
-
-    def _draw_edit_button(self, painter: QPainter) -> None:
-        """
-        Декоративная edit-кнопка как на референсе:
-
-        - белая закруглённая панель;
-        - карандаш слева;
-        - маленькая стрелка вниз справа;
-        - нажатие ни на что не влияет.
-        """
-        button_width = 76.0
-        button_height = 58.0
-        margin_top = 20.0
-        margin_right = 18.0
-
-        self._edit_button_rect = QRectF(
-            self.width() - margin_right - button_width,
-            margin_top,
-            button_width,
-            button_height,
-        )
-
-        painter.save()
-
-        painter.setPen(QPen(self.EDIT_BUTTON_BORDER, 1))
-        painter.setBrush(QBrush(self.EDIT_BUTTON_BACKGROUND))
-
-        painter.drawRoundedRect(
-            self._edit_button_rect,
-            8.0,
-            8.0,
-        )
-
-        left = self._edit_button_rect.left()
-        top = self._edit_button_rect.top()
-
-        pencil_start = QPointF(left + 28.0, top + 35.0)
-        pencil_end = QPointF(left + 43.0, top + 20.0)
-
-        pencil_pen = QPen(self.EDIT_BUTTON_ICON_COLOR, 3.0)
-        pencil_pen.setCapStyle(Qt.PenCapStyle.SquareCap)
-
-        painter.setPen(pencil_pen)
-        painter.drawLine(pencil_start, pencil_end)
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(self.EDIT_BUTTON_ICON_COLOR))
-
-        pencil_tip = QPolygonF(
-            [
-                QPointF(left + 24.5, top + 38.5),
-                QPointF(left + 29.7, top + 34.4),
-                QPointF(left + 28.6, top + 39.4),
-            ]
-        )
-
-        painter.drawPolygon(pencil_tip)
-
-        painter.setPen(QPen(self.EDIT_BUTTON_ICON_COLOR, 2.2))
-        painter.drawLine(
-            QPointF(left + 41.7, top + 17.0),
-            QPointF(left + 46.2, top + 21.5),
-        )
-
-        arrow_center_x = left + 60.0
-        arrow_center_y = top + 29.0
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(self.EDIT_BUTTON_ARROW_COLOR))
-
-        arrow = QPolygonF(
-            [
-                QPointF(arrow_center_x - 4.0, arrow_center_y - 2.0),
-                QPointF(arrow_center_x + 4.0, arrow_center_y - 2.0),
-                QPointF(arrow_center_x, arrow_center_y + 3.0),
-            ]
-        )
-
-        painter.drawPolygon(arrow)
 
         painter.restore()
 
@@ -707,35 +823,22 @@ class MixedTimeSeriesChart(QWidget):
         painter.restore()
 
     def _draw_spline_hover_marker(
-        self,
-        painter: QPainter,
-        center: QPointF,
+            self,
+            painter: QPainter,
+            center: QPointF,
     ) -> None:
         """
-        ROI Confirmed:
-        зелёный halo -> белый круг -> зелёный ромб.
+        Hover-marker для ROI Confirmed:
+
+        - зелёный полупрозрачный круг;
+        - зелёный ромб;
+        - белая обводка ромба толщиной 1 px.
         """
         self._draw_hover_halo(
             painter,
             center,
             self.ROI_COLOR,
             self.ROI_HOVER_HALO_RADIUS,
-        )
-
-        painter.save()
-
-        painter.setPen(
-            QPen(
-                QColor("#FFFFFF"),
-                self.HOVER_WHITE_CIRCLE_BORDER_WIDTH,
-            )
-        )
-        painter.setBrush(QBrush(QColor("#FFFFFF")))
-
-        painter.drawEllipse(
-            center,
-            self.HOVER_WHITE_CIRCLE_RADIUS,
-            self.HOVER_WHITE_CIRCLE_RADIUS,
         )
 
         radius = self.ROI_INNER_DIAMOND_RADIUS
@@ -749,20 +852,32 @@ class MixedTimeSeriesChart(QWidget):
             ]
         )
 
-        painter.setPen(Qt.PenStyle.NoPen)
+        painter.save()
+
+        white_outline = QPen(
+            QColor("#FFFFFF"),
+            1.0,
+        )
+        white_outline.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+
+        painter.setPen(white_outline)
         painter.setBrush(QBrush(self.ROI_COLOR))
+
         painter.drawPolygon(diamond)
 
         painter.restore()
 
     def _draw_line_hover_marker(
-        self,
-        painter: QPainter,
-        center: QPointF,
+            self,
+            painter: QPainter,
+            center: QPointF,
     ) -> None:
         """
-        Covertions:
-        увеличенный фиолетовый halo -> белый круг -> компактный квадрат.
+        Hover-marker для Covertions:
+
+        - фиолетовый полупрозрачный круг;
+        - фиолетовый квадрат;
+        - белая обводка квадрата толщиной 1 px.
         """
         self._draw_hover_halo(
             painter,
@@ -771,35 +886,27 @@ class MixedTimeSeriesChart(QWidget):
             self.CONVERSIONS_HOVER_HALO_RADIUS,
         )
 
-        painter.save()
-
-        painter.setPen(
-            QPen(
-                QColor("#FFFFFF"),
-                self.HOVER_WHITE_CIRCLE_BORDER_WIDTH,
-            )
-        )
-        painter.setBrush(QBrush(QColor("#FFFFFF")))
-
-        painter.drawEllipse(
-            center,
-            self.HOVER_WHITE_CIRCLE_RADIUS,
-            self.HOVER_WHITE_CIRCLE_RADIUS,
-        )
-
         size = self.CONVERSIONS_INNER_SQUARE_SIZE
 
-        painter.setPen(Qt.PenStyle.NoPen)
+        square_rect = QRectF(
+            center.x() - size / 2.0,
+            center.y() - size / 2.0,
+            size,
+            size,
+        )
+
+        painter.save()
+
+        white_outline = QPen(
+            QColor("#FFFFFF"),
+            1.0,
+        )
+        white_outline.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+
+        painter.setPen(white_outline)
         painter.setBrush(QBrush(self.CONVERSIONS_COLOR))
 
-        painter.drawRect(
-            QRectF(
-                center.x() - size / 2.0,
-                center.y() - size / 2.0,
-                size,
-                size,
-            )
-        )
+        painter.drawRect(square_rect)
 
         painter.restore()
 
@@ -975,11 +1082,26 @@ class MixedTimeSeriesChart(QWidget):
         position = event.position()
 
         if not self._plot_rect.contains(position):
+            changed = False
+
             if self._hover_index != -1:
                 self._hover_index = -1
+                changed = True
+
+            if self._is_cost_area_hovered:
+                self._is_cost_area_hovered = False
+                changed = True
+
+            if changed:
                 self.update()
 
             return
+
+        low, high = self._range_y()
+        area_points = self._points(self.area_data, low, high)
+        area_path = self._cost_area_path(area_points)
+
+        is_cost_area_hovered = area_path.contains(position)
 
         point_count = len(self.area_data)
 
@@ -989,20 +1111,33 @@ class MixedTimeSeriesChart(QWidget):
             data_rect = self._x_data_rect()
 
             fraction = (
-                (position.x() - data_rect.left())
-                / data_rect.width()
+                    (position.x() - data_rect.left())
+                    / data_rect.width()
             )
 
             index = int(round(fraction * (point_count - 1)))
             index = max(0, min(index, point_count - 1))
 
-        if index != self._hover_index:
+        if (
+                index != self._hover_index
+                or is_cost_area_hovered != self._is_cost_area_hovered
+        ):
             self._hover_index = index
+            self._is_cost_area_hovered = is_cost_area_hovered
             self.update()
 
     def leaveEvent(self, event) -> None:
+        changed = False
+
         if self._hover_index != -1:
             self._hover_index = -1
+            changed = True
+
+        if self._is_cost_area_hovered:
+            self._is_cost_area_hovered = False
+            changed = True
+
+        if changed:
             self.update()
 
         super().leaveEvent(event)

@@ -8,28 +8,49 @@ QWidget#chartContainer {
     border: none;
 }
 
-QFrame#chartTooltip {
+QPushButton#editButton {
+    min-width: 56px;
+    max-width: 56px;
+    min-height: 38px;
+    max-height: 38px;
+
+    background-color:  #FFFFFF;
+
+    border: 1px solid #D6D6D6;
+    border-radius: 8px;
+
+    margin: 0px;
+    padding: 0px;
+
+    outline: none;
+}
+
+QPushButton#editButton:hover {
     background-color: #FFFFFF;
-    color: #2D2D2D;
-    border: 1px solid #C7C7C7;
-    border-radius: 7px;
+    border: 1px solid #C8C8C8;
+
+    margin: 0px;
+    padding: 0px;
 }
 
-QLabel#tooltipDate {
-    background-color: transparent;
-    color: #303030;
-    font-family: Arial, sans-serif;
-    font-size: 17px;
-    font-weight: 400;
-    padding-bottom: 2px;
+QPushButton#editButton:pressed {
+    background-color: #F8F8F8;
+    border: 1px solid #BDBDBD;
+
+    margin: 0px;
+    padding: 0px;
+}
+QWidget#chartPanel {
+    background-color: #F9DFE4;
+    border: none;
+    margin: 0px;
+    padding: 0px;
 }
 
-QLabel#tooltipText {
-    background-color: transparent;
-    color: #303030;
-    font-family: Arial, sans-serif;
-    font-size: 18px;
-    min-width: 275px;
-    min-height: 22px;
+QWidget#chartPanel {
+    background-color: #E2EDF9;
+    border: none;
+    margin: 0px;
+    padding: 0px;
 }
 """
