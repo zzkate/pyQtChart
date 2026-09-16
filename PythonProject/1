@@ -1,0 +1,144 @@
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPen
+from PySide6.QtCharts import (
+    QAreaSeries,
+    QBarCategoryAxis,
+    QBarSeries,
+    QBarSet,
+    QChart,
+    QChartView,
+    QLineSeries,
+    QValueAxis,
+    QSplineSeries,
+)
+
+
+class ChartView(QChartView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.chart_object = QChart()
+        self.setChart(self.chart_object)
+
+    def plot(
+        self,
+        area_values,
+        spline_values,
+        line_values,
+        bar_values,
+    ):
+        chart = self.chart_object
+
+        chart.removeAllSeries()
+
+        # Оси создаются
+        axis_x = QValueAxis()
+        axis_y = QValueAxis()
+        bar_axis_x = QBarCategoryAxis()
+
+        axis_x.setRange(
+            0,
+            max(
+                len(area_values),
+                len(spline_values),
+                len(line_values),
+                len(bar_values),
+            ) - 1,
+        )
+
+        all_values = (
+            area_values
+            + spline_values
+            + line_values
+            + bar_values
+        )
+
+        axis_y.setRange(
+            min(0, min(all_values)),
+            max(all_values),
+        )
+
+        bar_axis_x.append(
+            [str(i) for i in range(len(bar_values))]
+        )
+
+        # СНАЧАЛА оси добавляются в этот chart
+        chart.addAxis(
+            axis_x,
+            Qt.AlignmentFlag.AlignBottom,
+        )
+        chart.addAxis(
+            axis_y,
+            Qt.AlignmentFlag.AlignLeft,
+        )
+        chart.addAxis(
+            bar_axis_x,
+            Qt.AlignmentFlag.AlignBottom,
+        )
+
+        # -------------------------------------------------
+        # Area
+        # -------------------------------------------------
+        area_upper = QLineSeries()
+        area_lower = QLineSeries()
+
+        for i, value in enumerate(area_values):
+            area_upper.append(i, value)
+            area_lower.append(i, 0)
+
+        area = QAreaSeries(area_upper, area_lower)
+        area.setName("Area")
+        area.setPen(QPen(QColor("#3498db"), 2))
+
+        chart.addSeries(area)
+
+        # Только после chart.addAxis()
+        area.attachAxis(axis_x)
+        area.attachAxis(axis_y)
+
+        # -------------------------------------------------
+        # Spline
+        # -------------------------------------------------
+        spline = QSplineSeries()
+        spline.setName("Spline")
+        spline.setPen(QPen(QColor("#e67e22"), 2))
+
+        for i, value in enumerate(spline_values):
+            spline.append(i, value)
+
+        chart.addSeries(spline)
+        spline.attachAxis(axis_x)
+        spline.attachAxis(axis_y)
+
+        # -------------------------------------------------
+        # Line
+        # -------------------------------------------------
+        line = QLineSeries()
+        line.setName("Line")
+        line.setPen(QPen(QColor("#2ecc71"), 2))
+
+        for i, value in enumerate(line_values):
+            line.append(i, value)
+
+        chart.addSeries(line)
+        line.attachAxis(axis_x)
+        line.attachAxis(axis_y)
+
+        # -------------------------------------------------
+        # Bar
+        # -------------------------------------------------
+        bar_set = QBarSet("Bar")
+        bar_set.setColor(QColor("#9b59b6"))
+
+        for value in bar_values:
+            bar_set.append(value)
+
+        bars = QBarSeries()
+        bars.append(bar_set)
+        bars.setBarWidth(0.6)
+
+        chart.addSeries(bars)
+
+        # Для bar используется QBarCategoryAxis
+        bars.attachAxis(bar_axis_x)
+        bars.attachAxis(axis_y)
