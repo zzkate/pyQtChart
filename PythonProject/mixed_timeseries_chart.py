@@ -13,6 +13,7 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPolygonF,
 )
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -25,23 +26,28 @@ class TimePoint:
 
 class MixedTimeSeriesChart(QWidget):
     """
-    Кастомный QPainter-график.
+    Кастомный график через QPainter.
 
-    Входные series:
-        area_data   -> Cost          (жёлтая area-заливка)
-        bar_data    -> CPA           (синие столбцы)
-        spline_data -> ROI Confirmed (зелёная сглаженная линия)
-        line_data   -> Covertions    (фиолетовая линия)
+    Соответствие series:
+        area_data   -> Cost          — жёлтая area-заливка
+        bar_data    -> CPA           — синие bars
+        spline_data -> ROI Confirmed — зелёная spline
+        line_data   -> Covertions    — фиолетовая line
 
-    Каждый элемент:
+    Каждая точка входных данных:
         (datetime, float)
 
-    У всех 4 наборов должно быть одинаковое число точек
-    и одинаковые timestamps.
+    У всех четырёх последовательностей должны совпадать:
+    - количество точек;
+    - timestamps.
     """
 
     COST_COLOR = QColor("#F7E98B")
+    COST_BORDER_COLOR = QColor("#E4D675")
+
     CPA_COLOR = QColor("#326BE5")
+    CPA_BORDER_COLOR = QColor("#2457C2")
+
     ROI_COLOR = QColor("#238D2B")
     CONVERSIONS_COLOR = QColor("#9D00D8")
 
@@ -49,13 +55,37 @@ class MixedTimeSeriesChart(QWidget):
     PLOT_BACKGROUND_COLOR = QColor("#F7E2E5")
     PLOT_BORDER_COLOR = QColor("#B8B8B8")
 
-    Y_LABEL_BACKGROUND_COLOR = QColor("#FAFAFA")
-    Y_LABEL_TEXT_COLOR = QColor("#4A4A4A")
+    SIDEBAR_BACKGROUND_COLOR = QColor("#F7DDE2")
+    SIDEBAR_TITLE_BACKGROUND = QColor("#FFFFFF")
+    SIDEBAR_CELL_WHITE = QColor("#FAFAFA")
+    SIDEBAR_CELL_PINK = QColor("#F7E5E8")
+    SIDEBAR_TEXT_COLOR = QColor("#6A6A6A")
+    SIDEBAR_TITLE_COLOR = QColor("#212121")
+    SIDEBAR_SEPARATOR_COLOR = QColor("#E9E4E5")
 
     TOOLTIP_BACKGROUND_COLOR = QColor("#FFFFFF")
     TOOLTIP_BORDER_COLOR = QColor("#BDBDBD")
     TOOLTIP_TEXT_COLOR = QColor("#303030")
     TOOLTIP_SHADOW_COLOR = QColor(0, 0, 0, 55)
+
+    EDIT_BUTTON_BACKGROUND = QColor("#FFFFFF")
+    EDIT_BUTTON_BORDER = QColor("#E2E2E2")
+    EDIT_BUTTON_ICON_COLOR = QColor("#5E5E5E")
+    EDIT_BUTTON_ARROW_COLOR = QColor("#666666")
+
+    HOVER_HALO_ALPHA = 80
+
+    ROI_HOVER_HALO_RADIUS = 12.0
+    CONVERSIONS_HOVER_HALO_RADIUS = 15.0
+
+    HOVER_WHITE_CIRCLE_RADIUS = 6.0
+    HOVER_WHITE_CIRCLE_BORDER_WIDTH = 1.2
+
+    ROI_INNER_DIAMOND_RADIUS = 3.4
+    CONVERSIONS_INNER_SQUARE_SIZE = 5.2
+
+    AREA_HOVER_RADIUS = 4.0
+    AREA_HOVER_BORDER_WIDTH = 1.5
 
     def __init__(
         self,
@@ -68,11 +98,13 @@ class MixedTimeSeriesChart(QWidget):
         super().__init__(parent)
 
         self.setObjectName("chartContainer")
-        self.setMinimumSize(700, 400)
+        self.setMinimumSize(760, 420)
+
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
+
         self.setMouseTracking(True)
 
         self.area_data = self._normalize(area_data)
@@ -84,6 +116,7 @@ class MixedTimeSeriesChart(QWidget):
 
         self._plot_rect = QRectF()
         self._hover_index = -1
+        self._edit_button_rect = QRectF()
 
     @staticmethod
     def _normalize(
@@ -120,14 +153,14 @@ class MixedTimeSeriesChart(QWidget):
                 "Все последовательности должны иметь одинаковую длину."
             )
 
-        timestamps = [point.time for point in self.area_data]
+        expected_timestamps = [point.time for point in self.area_data]
 
         for sequence in sequences[1:]:
-            current_timestamps = [point.time for point in sequence]
+            timestamps = [point.time for point in sequence]
 
-            if current_timestamps != timestamps:
+            if timestamps != expected_timestamps:
                 raise ValueError(
-                    "Временные метки во всех последовательностях "
+                    "Timestamps всех четырёх последовательностей "
                     "должны совпадать."
                 )
 
@@ -138,7 +171,7 @@ class MixedTimeSeriesChart(QWidget):
         line_data: Sequence[TimePoint | tuple[datetime, float]],
         bar_data: Sequence[TimePoint | tuple[datetime, float]],
     ) -> None:
-        """Заменяет данные и запускает перерисовку."""
+        """Заменяет данные и выполняет перерисовку графика."""
         self.area_data = self._normalize(area_data)
         self.spline_data = self._normalize(spline_data)
         self.line_data = self._normalize(line_data)
@@ -149,16 +182,37 @@ class MixedTimeSeriesChart(QWidget):
         self._hover_index = -1
         self.update()
 
+    def _sidebar_rect(self) -> QRectF:
+        return QRectF(
+            0.0,
+            0.0,
+            74.0,
+            float(self.height()),
+        )
+
     def _plot_area(self) -> QRectF:
-        left = 78.0
-        top = 28.0
-        right = 28.0
-        bottom = 28.0
+        left = 112.0
+        top = 95.0
+        right = 98.0
+        bottom = 112.0
 
         width = max(10.0, float(self.width()) - left - right)
         height = max(10.0, float(self.height()) - top - bottom)
 
         return QRectF(left, top, width, height)
+
+    def _x_data_rect(self) -> QRectF:
+        horizontal_padding = 58.0
+
+        return QRectF(
+            self._plot_rect.left() + horizontal_padding,
+            self._plot_rect.top(),
+            max(
+                1.0,
+                self._plot_rect.width() - horizontal_padding * 2.0,
+            ),
+            self._plot_rect.height(),
+        )
 
     def _range_y(self) -> tuple[float, float]:
         values = [
@@ -178,22 +232,23 @@ class MixedTimeSeriesChart(QWidget):
         if high <= low:
             high = low + 1.0
 
-        padding = (high - low) * 0.12
+        padding = (high - low) * 0.10
 
         return (
-            low - padding * 0.05,
+            low - padding * 0.06,
             high + padding,
         )
 
     def _x(self, index: int) -> float:
+        data_rect = self._x_data_rect()
         count = len(self.area_data)
 
         if count <= 1:
-            return self._plot_rect.center().x()
+            return data_rect.center().x()
 
         return (
-            self._plot_rect.left()
-            + self._plot_rect.width() * index / float(count - 1)
+            data_rect.left()
+            + data_rect.width() * index / float(count - 1)
         )
 
     def _y(self, value: float, low: float, high: float) -> float:
@@ -204,7 +259,7 @@ class MixedTimeSeriesChart(QWidget):
 
         return self._plot_rect.bottom() - ratio * self._plot_rect.height()
 
-    def _series_points(
+    def _points(
         self,
         series: Sequence[TimePoint],
         low: float,
@@ -228,25 +283,119 @@ class MixedTimeSeriesChart(QWidget):
             self._plot_rect = self._plot_area()
             low, high = self._range_y()
 
-            self._draw_plot_background(painter)
-            self._draw_y_labels(painter, low, high)
+            area_points = self._points(self.area_data, low, high)
+            spline_points = self._points(self.spline_data, low, high)
+            line_points = self._points(self.line_data, low, high)
+            bar_points = self._points(self.bar_data, low, high)
 
-            area_points = self._series_points(self.area_data, low, high)
-            spline_points = self._series_points(self.spline_data, low, high)
-            line_points = self._series_points(self.line_data, low, high)
-            bar_points = self._series_points(self.bar_data, low, high)
+            self._draw_sidebar(painter)
+            self._draw_plot_background(painter)
 
             self._draw_cost_area(painter, area_points)
             self._draw_cpa_bars(painter, bar_points, low, high)
             self._draw_roi_spline(painter, spline_points)
             self._draw_conversions_line(painter, line_points)
 
+            self._draw_edit_button(painter)
+
             if self._hover_index >= 0:
-                self._draw_hover_line(painter)
-                self._draw_tooltip(painter, low, high)
+                self._draw_area_hover_marker(painter, area_points)
+
+                self._draw_spline_hover_marker(
+                    painter,
+                    spline_points[self._hover_index],
+                )
+
+                self._draw_line_hover_marker(
+                    painter,
+                    line_points[self._hover_index],
+                )
+
+                self._draw_tooltip(painter)
 
         finally:
             painter.end()
+
+    def _draw_sidebar(self, painter: QPainter) -> None:
+        """
+        Левая summary-панель, как на референсе.
+
+        Фоны карточек чередуются:
+        белый -> розовый -> белый -> розовый.
+        """
+        painter.save()
+
+        sidebar = self._sidebar_rect()
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.SIDEBAR_BACKGROUND_COLOR))
+        painter.drawRect(sidebar)
+
+        x = sidebar.left()
+        width = sidebar.width()
+
+        start_y = 95.0
+        title_height = 58.0
+        cell_height = 46.0
+
+        title_rect = QRectF(x, start_y, width, title_height)
+
+        painter.setBrush(QBrush(self.SIDEBAR_TITLE_BACKGROUND))
+        painter.drawRect(title_rect)
+
+        title_font = QFont("Arial", 18)
+        title_font.setBold(True)
+
+        painter.setPen(QPen(self.SIDEBAR_TITLE_COLOR))
+        painter.setFont(title_font)
+
+        painter.drawText(
+            title_rect.adjusted(7.0, 0.0, -7.0, 0.0),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "Tdy",
+        )
+
+        values = ["0%", "$0", "$0", "0", "0", "—"]
+
+        value_font = QFont("Arial", 16)
+        painter.setFont(value_font)
+
+        current_y = start_y + title_height
+
+        for index, value in enumerate(values):
+            cell_rect = QRectF(
+                x,
+                current_y,
+                width,
+                cell_height,
+            )
+
+            background = (
+                self.SIDEBAR_CELL_WHITE
+                if index % 2 == 0
+                else self.SIDEBAR_CELL_PINK
+            )
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(background))
+            painter.drawRect(cell_rect)
+
+            painter.setPen(QPen(self.SIDEBAR_SEPARATOR_COLOR, 1))
+            painter.drawLine(
+                QPointF(cell_rect.left(), cell_rect.top()),
+                QPointF(cell_rect.right(), cell_rect.top()),
+            )
+
+            painter.setPen(QPen(self.SIDEBAR_TEXT_COLOR))
+            painter.drawText(
+                cell_rect.adjusted(5.0, 0.0, -10.0, 0.0),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                value,
+            )
+
+            current_y += cell_height
+
+        painter.restore()
 
     def _draw_plot_background(self, painter: QPainter) -> None:
         painter.save()
@@ -254,50 +403,6 @@ class MixedTimeSeriesChart(QWidget):
         painter.setPen(QPen(self.PLOT_BORDER_COLOR, 1))
         painter.setBrush(QBrush(self.PLOT_BACKGROUND_COLOR))
         painter.drawRect(self._plot_rect)
-
-        painter.restore()
-
-    def _draw_y_labels(
-        self,
-        painter: QPainter,
-        low: float,
-        high: float,
-    ) -> None:
-        """
-        Белые карточки Y-значений слева.
-        Без X-подписей, осей и горизонтальной сетки.
-        """
-        painter.save()
-
-        label_width = 58.0
-        label_height = 32.0
-        label_x = 4.0
-        ticks = 6
-
-        painter.setFont(QFont("Arial", 10))
-
-        for i in range(ticks):
-            ratio = i / float(ticks - 1)
-            y = self._plot_rect.bottom() - ratio * self._plot_rect.height()
-            value = low + ratio * (high - low)
-
-            label_rect = QRectF(
-                label_x,
-                y - label_height / 2.0,
-                label_width,
-                label_height,
-            )
-
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(self.Y_LABEL_BACKGROUND_COLOR))
-            painter.drawRect(label_rect)
-
-            painter.setPen(QPen(self.Y_LABEL_TEXT_COLOR))
-            painter.drawText(
-                label_rect.adjusted(2.0, 0.0, -5.0, 0.0),
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                f"{value:.0f}",
-            )
 
         painter.restore()
 
@@ -325,8 +430,8 @@ class MixedTimeSeriesChart(QWidget):
         )
         path.closeSubpath()
 
-        painter.setPen(QPen(QColor("#E4D675"), 1.5))
-        painter.setBrush(QBrush(QColor(247, 233, 139, 125)))
+        painter.setPen(QPen(self.COST_BORDER_COLOR, 1.4))
+        painter.setBrush(QBrush(QColor(247, 233, 139, 115)))
         painter.drawPath(path)
 
         painter.restore()
@@ -343,32 +448,47 @@ class MixedTimeSeriesChart(QWidget):
 
         painter.save()
 
-        point_count = len(points)
-
-        if point_count > 1:
-            spacing = self._plot_rect.width() / float(point_count - 1)
-            bar_width = min(16.0, max(5.0, spacing * 0.22))
+        if len(points) > 1:
+            spacing = self._x_data_rect().width() / float(len(points) - 1)
+            bar_width = min(18.0, max(5.0, spacing * 0.22))
         else:
             bar_width = 14.0
 
         baseline_y = self._y(0.0, low, high)
 
-        painter.setPen(QPen(QColor("#2457C2"), 1))
+        painter.setPen(QPen(self.CPA_BORDER_COLOR, 1))
         painter.setBrush(QBrush(self.CPA_COLOR))
+
+        bars: list[QRectF] = []
 
         for point in points:
             top = min(point.y(), baseline_y)
             height = max(1.0, abs(point.y() - baseline_y))
 
-            painter.drawRoundedRect(
-                QRectF(
-                    point.x() - bar_width / 2.0,
-                    top,
-                    bar_width,
-                    height,
-                ),
-                2.0,
-                2.0,
+            bar_rect = QRectF(
+                point.x() - bar_width / 2.0,
+                top,
+                bar_width,
+                height,
+            )
+
+            painter.drawRoundedRect(bar_rect, 2.0, 2.0)
+            bars.append(bar_rect)
+
+        highlight_pen = QPen(QColor(255, 255, 255, 180), 1.2)
+        highlight_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+
+        painter.setPen(highlight_pen)
+
+        for bar_rect in bars:
+            if bar_rect.height() < 3.0:
+                continue
+
+            highlight_y = bar_rect.top() + 1.7
+
+            painter.drawLine(
+                QPointF(bar_rect.left() + 2.0, highlight_y),
+                QPointF(bar_rect.right() - 2.0, highlight_y),
             )
 
         painter.restore()
@@ -401,7 +521,11 @@ class MixedTimeSeriesChart(QWidget):
                 next_point.y(),
             )
 
-            path.cubicTo(control_1, control_2, next_point)
+            path.cubicTo(
+                control_1,
+                control_2,
+                next_point,
+            )
 
         pen = QPen(self.ROI_COLOR, 2.2)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -454,40 +578,242 @@ class MixedTimeSeriesChart(QWidget):
 
         painter.restore()
 
-    def _draw_hover_line(self, painter: QPainter) -> None:
-        x = self._x(self._hover_index)
+    def _draw_edit_button(self, painter: QPainter) -> None:
+        """
+        Декоративная edit-кнопка как на референсе:
+
+        - белая закруглённая панель;
+        - карандаш слева;
+        - маленькая стрелка вниз справа;
+        - нажатие ни на что не влияет.
+        """
+        button_width = 76.0
+        button_height = 58.0
+        margin_top = 20.0
+        margin_right = 18.0
+
+        self._edit_button_rect = QRectF(
+            self.width() - margin_right - button_width,
+            margin_top,
+            button_width,
+            button_height,
+        )
 
         painter.save()
 
-        pen = QPen(QColor(70, 70, 70, 105), 1)
-        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(QPen(self.EDIT_BUTTON_BORDER, 1))
+        painter.setBrush(QBrush(self.EDIT_BUTTON_BACKGROUND))
 
-        painter.setPen(pen)
+        painter.drawRoundedRect(
+            self._edit_button_rect,
+            8.0,
+            8.0,
+        )
+
+        left = self._edit_button_rect.left()
+        top = self._edit_button_rect.top()
+
+        pencil_start = QPointF(left + 28.0, top + 35.0)
+        pencil_end = QPointF(left + 43.0, top + 20.0)
+
+        pencil_pen = QPen(self.EDIT_BUTTON_ICON_COLOR, 3.0)
+        pencil_pen.setCapStyle(Qt.PenCapStyle.SquareCap)
+
+        painter.setPen(pencil_pen)
+        painter.drawLine(pencil_start, pencil_end)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.EDIT_BUTTON_ICON_COLOR))
+
+        pencil_tip = QPolygonF(
+            [
+                QPointF(left + 24.5, top + 38.5),
+                QPointF(left + 29.7, top + 34.4),
+                QPointF(left + 28.6, top + 39.4),
+            ]
+        )
+
+        painter.drawPolygon(pencil_tip)
+
+        painter.setPen(QPen(self.EDIT_BUTTON_ICON_COLOR, 2.2))
         painter.drawLine(
-            QPointF(x, self._plot_rect.top()),
-            QPointF(x, self._plot_rect.bottom()),
+            QPointF(left + 41.7, top + 17.0),
+            QPointF(left + 46.2, top + 21.5),
+        )
+
+        arrow_center_x = left + 60.0
+        arrow_center_y = top + 29.0
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.EDIT_BUTTON_ARROW_COLOR))
+
+        arrow = QPolygonF(
+            [
+                QPointF(arrow_center_x - 4.0, arrow_center_y - 2.0),
+                QPointF(arrow_center_x + 4.0, arrow_center_y - 2.0),
+                QPointF(arrow_center_x, arrow_center_y + 3.0),
+            ]
+        )
+
+        painter.drawPolygon(arrow)
+
+        painter.restore()
+
+    def _draw_area_hover_marker(
+        self,
+        painter: QPainter,
+        points: list[QPointF],
+    ) -> None:
+        if (
+            self._hover_index < 0
+            or self._hover_index >= len(points)
+        ):
+            return
+
+        painter.save()
+
+        painter.setPen(QPen(self.COST_BORDER_COLOR, 1.5))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+
+        painter.drawEllipse(
+            points[self._hover_index],
+            self.AREA_HOVER_RADIUS,
+            self.AREA_HOVER_RADIUS,
+        )
+
+        painter.restore()
+
+    def _draw_hover_halo(
+        self,
+        painter: QPainter,
+        center: QPointF,
+        color: QColor,
+        radius: float,
+    ) -> None:
+        painter.save()
+
+        halo_color = QColor(
+            color.red(),
+            color.green(),
+            color.blue(),
+            self.HOVER_HALO_ALPHA,
+        )
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(halo_color))
+
+        painter.drawEllipse(center, radius, radius)
+
+        painter.restore()
+
+    def _draw_spline_hover_marker(
+        self,
+        painter: QPainter,
+        center: QPointF,
+    ) -> None:
+        """
+        ROI Confirmed:
+        зелёный halo -> белый круг -> зелёный ромб.
+        """
+        self._draw_hover_halo(
+            painter,
+            center,
+            self.ROI_COLOR,
+            self.ROI_HOVER_HALO_RADIUS,
+        )
+
+        painter.save()
+
+        painter.setPen(
+            QPen(
+                QColor("#FFFFFF"),
+                self.HOVER_WHITE_CIRCLE_BORDER_WIDTH,
+            )
+        )
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+
+        painter.drawEllipse(
+            center,
+            self.HOVER_WHITE_CIRCLE_RADIUS,
+            self.HOVER_WHITE_CIRCLE_RADIUS,
+        )
+
+        radius = self.ROI_INNER_DIAMOND_RADIUS
+
+        diamond = QPolygonF(
+            [
+                QPointF(center.x(), center.y() - radius),
+                QPointF(center.x() + radius, center.y()),
+                QPointF(center.x(), center.y() + radius),
+                QPointF(center.x() - radius, center.y()),
+            ]
+        )
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.ROI_COLOR))
+        painter.drawPolygon(diamond)
+
+        painter.restore()
+
+    def _draw_line_hover_marker(
+        self,
+        painter: QPainter,
+        center: QPointF,
+    ) -> None:
+        """
+        Covertions:
+        увеличенный фиолетовый halo -> белый круг -> компактный квадрат.
+        """
+        self._draw_hover_halo(
+            painter,
+            center,
+            self.CONVERSIONS_COLOR,
+            self.CONVERSIONS_HOVER_HALO_RADIUS,
+        )
+
+        painter.save()
+
+        painter.setPen(
+            QPen(
+                QColor("#FFFFFF"),
+                self.HOVER_WHITE_CIRCLE_BORDER_WIDTH,
+            )
+        )
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+
+        painter.drawEllipse(
+            center,
+            self.HOVER_WHITE_CIRCLE_RADIUS,
+            self.HOVER_WHITE_CIRCLE_RADIUS,
+        )
+
+        size = self.CONVERSIONS_INNER_SQUARE_SIZE
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.CONVERSIONS_COLOR))
+
+        painter.drawRect(
+            QRectF(
+                center.x() - size / 2.0,
+                center.y() - size / 2.0,
+                size,
+                size,
+            )
         )
 
         painter.restore()
 
     def _tooltip_rect(self) -> QRectF:
-        """
-        Вычисляет положение tooltip.
-
-        Карточка будет справа от курсора. Если справа мало места,
-        она появится слева от текущей точки.
-        """
-        tooltip_width = 315.0
+        tooltip_width = 320.0
         tooltip_height = 154.0
 
-        point_x = self._x(self._hover_index)
-        point_y = self._plot_rect.top() + 12.0
+        current_x = self._x(self._hover_index)
 
-        x = point_x + 16.0
-        y = point_y
+        x = current_x + 18.0
+        y = self._plot_rect.top() + 12.0
 
         if x + tooltip_width > self.width() - 8.0:
-            x = point_x - tooltip_width - 16.0
+            x = current_x - tooltip_width - 18.0
 
         x = max(8.0, x)
         y = max(8.0, y)
@@ -497,88 +823,94 @@ class MixedTimeSeriesChart(QWidget):
 
         return QRectF(x, y, tooltip_width, tooltip_height)
 
-    def _draw_tooltip(
-        self,
-        painter: QPainter,
-        low: float,
-        high: float,
-    ) -> None:
+    def _draw_tooltip(self, painter: QPainter) -> None:
         if self._hover_index < 0:
             return
 
-        cost_point = self.area_data[self._hover_index]
-        cpa_point = self.bar_data[self._hover_index]
-        roi_point = self.spline_data[self._hover_index]
-        conversions_point = self.line_data[self._hover_index]
+        cost = self.area_data[self._hover_index]
+        cpa = self.bar_data[self._hover_index]
+        roi = self.spline_data[self._hover_index]
+        conversions = self.line_data[self._hover_index]
 
         tooltip_rect = self._tooltip_rect()
 
         painter.save()
 
-        shadow_rect = tooltip_rect.translated(3.0, 4.0)
-
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(self.TOOLTIP_SHADOW_COLOR))
-        painter.drawRoundedRect(shadow_rect, 7.0, 7.0)
+
+        painter.drawRoundedRect(
+            tooltip_rect.translated(3.0, 4.0),
+            7.0,
+            7.0,
+        )
 
         painter.setPen(QPen(self.TOOLTIP_BORDER_COLOR, 1))
         painter.setBrush(QBrush(self.TOOLTIP_BACKGROUND_COLOR))
-        painter.drawRoundedRect(tooltip_rect, 7.0, 7.0)
 
-        left = tooltip_rect.left() + 15.0
+        painter.drawRoundedRect(
+            tooltip_rect,
+            7.0,
+            7.0,
+        )
+
+        text_x = tooltip_rect.left() + 16.0
         y = tooltip_rect.top() + 29.0
 
-        date_font = QFont("Arial", 16)
-        painter.setFont(date_font)
+        painter.setFont(QFont("Arial", 16))
         painter.setPen(QPen(self.TOOLTIP_TEXT_COLOR))
 
         painter.drawText(
-            QPointF(left, y),
-            cost_point.time.strftime("%d.%m.%Y"),
+            QPointF(text_x, y),
+            cost.time.strftime("%d.%m.%Y"),
         )
 
         y += 29.0
 
         self._draw_tooltip_row(
-            painter=painter,
-            x=left,
-            y=y,
-            color=self.COST_COLOR,
-            label="Cost:",
-            value=cost_point.value,
+            painter,
+            text_x,
+            y,
+            self.COST_COLOR,
+            "Cost:",
+            cost.value,
+            integer=False,
         )
 
         y += 27.0
 
         self._draw_tooltip_row(
-            painter=painter,
-            x=left,
-            y=y,
-            color=self.CPA_COLOR,
-            label="CPA:",
-            value=cpa_point.value,
+            painter,
+            text_x,
+            y,
+            self.CPA_COLOR,
+            "CPA:",
+            cpa.value,
+            integer=False,
         )
 
         y += 27.0
 
         self._draw_tooltip_row(
-            painter=painter,
-            x=left,
-            y=y,
-            color=self.ROI_COLOR,
-            label="ROI Confirmed:",
-            value=roi_point.value,
+            painter,
+            text_x,
+            y,
+            self.ROI_COLOR,
+            "ROI Confirmed:",
+            roi.value,
+            integer=False,
         )
 
         y += 27.0
 
         self._draw_tooltip_row(
-            painter=painter,
-            x=left,
-            y=y,
-            color=self.CONVERSIONS_COLOR,
-            label="Covertions:",
-            value=conversions_point.value,
+            painter,
+            text_x,
+            y,
+            self.CONVERSIONS_COLOR,
+            "Covertions:",
+            conversions.value,
+            integer=True,
         )
 
         painter.restore()
@@ -591,62 +923,78 @@ class MixedTimeSeriesChart(QWidget):
         color: QColor,
         label: str,
         value: float,
+        integer: bool,
     ) -> None:
-        """Рисует цветную точку, название показателя и жирное значение."""
         dot_radius = 7.0
 
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(color))
+
         painter.drawEllipse(
-            QPointF(x + dot_radius, y - dot_radius + 1.0),
+            QPointF(
+                x + dot_radius,
+                y - dot_radius + 1.0,
+            ),
             dot_radius,
             dot_radius,
         )
 
         label_font = QFont("Arial", 16)
+
         painter.setFont(label_font)
         painter.setPen(QPen(QColor("#303030")))
 
-        text_x = x + 24.0
+        label_x = x + 24.0
+        label_text = f"{label} "
+
         painter.drawText(
-            QPointF(text_x, y + 5.0),
-            f"{label} ",
+            QPointF(label_x, y + 5.0),
+            label_text,
         )
 
         metrics = QFontMetrics(label_font)
-        value_x = text_x + metrics.horizontalAdvance(f"{label} ")
+        value_x = label_x + metrics.horizontalAdvance(label_text)
 
         value_font = QFont("Arial", 16)
         value_font.setBold(True)
 
         painter.setFont(value_font)
+
+        text_value = (
+            str(int(round(value)))
+            if integer
+            else f"{value:.2f}"
+        )
+
         painter.drawText(
             QPointF(value_x, y + 5.0),
-            f"{value:.2f}",
+            text_value,
         )
 
     def mouseMoveEvent(self, event) -> None:
-        mouse_position = event.position()
+        position = event.position()
 
-        if not self._plot_rect.contains(mouse_position):
+        if not self._plot_rect.contains(position):
             if self._hover_index != -1:
                 self._hover_index = -1
                 self.update()
 
             return
 
-        count = len(self.area_data)
+        point_count = len(self.area_data)
 
-        if count == 1:
+        if point_count == 1:
             index = 0
         else:
+            data_rect = self._x_data_rect()
+
             fraction = (
-                (mouse_position.x() - self._plot_rect.left())
-                / self._plot_rect.width()
+                (position.x() - data_rect.left())
+                / data_rect.width()
             )
 
-            index = int(round(fraction * (count - 1)))
-            index = max(0, min(index, count - 1))
+            index = int(round(fraction * (point_count - 1)))
+            index = max(0, min(index, point_count - 1))
 
         if index != self._hover_index:
             self._hover_index = index
