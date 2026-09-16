@@ -1,0 +1,11 @@
+Активируйте виртуальное окружение и выполните:
+
+cd "PyQtChart/PythonProject"
+
+source .venv/bin/activate
+
+pip install -r requirements.txt
+
+запуск
+
+./.venv/bin/python main.py

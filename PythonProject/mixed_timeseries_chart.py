@@ -4,29 +4,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Sequence
 
-from PySide6.QtCore import (
-    Qt,
-    QPoint,
-    QPointF,
-    QRectF,
-    Signal,
-)
+from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import (
     QColor,
     QBrush,
     QFont,
+    QFontMetrics,
     QPainter,
     QPainterPath,
     QPen,
 )
-from PySide6.QtWidgets import (
-    QFrame,
-    QGraphicsDropShadowEffect,
-    QLabel,
-    QSizePolicy,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QSizePolicy, QWidget
 
 
 @dataclass(frozen=True)
@@ -35,115 +23,39 @@ class TimePoint:
     value: float
 
 
-class ChartTooltip(QFrame):
-    """Всплывающая карточка с показателями для одной даты."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-
-        self.setObjectName("chartTooltip")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-        self.date_label = QLabel(self)
-        self.date_label.setObjectName("tooltipDate")
-
-        self.area_label = QLabel(self)
-        self.spline_label = QLabel(self)
-        self.line_label = QLabel(self)
-        self.bar_label = QLabel(self)
-
-        for label in (
-            self.area_label,
-            self.spline_label,
-            self.line_label,
-            self.bar_label,
-        ):
-            label.setObjectName("tooltipText")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(2)
-
-        layout.addWidget(self.date_label)
-        layout.addWidget(self.area_label)
-        layout.addWidget(self.spline_label)
-        layout.addWidget(self.line_label)
-        layout.addWidget(self.bar_label)
-
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(18)
-        shadow.setOffset(3, 4)
-        shadow.setColor(QColor(0, 0, 0, 85))
-        self.setGraphicsEffect(shadow)
-
-        self.hide()
-
-    def set_values(
-        self,
-        timestamp: datetime,
-        area_value: float,
-        spline_value: float,
-        line_value: float,
-        bar_value: float,
-    ) -> None:
-        self.date_label.setText(timestamp.strftime("%d.%m.%Y"))
-
-        self.area_label.setText(
-            f'<span style="color:#F7E98B; font-size:21px;">●</span> '
-            f'Area: <b>{area_value:.2f}</b>'
-        )
-        self.spline_label.setText(
-            f'<span style="color:#238D2B; font-size:21px;">●</span> '
-            f'Spline: <b>{spline_value:.2f}</b>'
-        )
-        self.line_label.setText(
-            f'<span style="color:#9D00D8; font-size:21px;">●</span> '
-            f'Line: <b>{line_value:.2f}</b>'
-        )
-        self.bar_label.setText(
-            f'<span style="color:#326BE5; font-size:21px;">●</span> '
-            f'Bar: <b>{bar_value:.2f}</b>'
-        )
-
-        self.adjustSize()
-
-
 class MixedTimeSeriesChart(QWidget):
     """
-    Кастомный график, рисуемый через QPainter.
+    Кастомный QPainter-график.
 
-    Принимает четыре time-series одинаковой длины и с идентичными timestamps:
+    Входные series:
+        area_data   -> Cost          (жёлтая area-заливка)
+        bar_data    -> CPA           (синие столбцы)
+        spline_data -> ROI Confirmed (зелёная сглаженная линия)
+        line_data   -> Covertions    (фиолетовая линия)
 
-    area_data:
-        жёлтая полупрозрачная area-заливка.
+    Каждый элемент:
+        (datetime, float)
 
-    spline_data:
-        зелёная сглаженная кривая.
-
-    line_data:
-        фиолетовая ломаная с маркерами.
-
-    bar_data:
-        синие вертикальные бары.
-
-    Формат данных:
-
-        [
-            (datetime(2026, 6, 10), 44.36),
-            (datetime(2026, 6, 11), 38.10),
-        ]
+    У всех 4 наборов должно быть одинаковое число точек
+    и одинаковые timestamps.
     """
 
-    AREA_COLOR = QColor("#F7E98B")
-    SPLINE_COLOR = QColor("#238D2B")
-    LINE_COLOR = QColor("#9D00D8")
-    BAR_COLOR = QColor("#326BE5")
+    COST_COLOR = QColor("#F7E98B")
+    CPA_COLOR = QColor("#326BE5")
+    ROI_COLOR = QColor("#238D2B")
+    CONVERSIONS_COLOR = QColor("#9D00D8")
 
-    PLOT_BACKGROUND = QColor("#F7E2E5")
-    GRID_COLOR = QColor("#D5C8CB")
-    AXIS_COLOR = QColor("#A7A1A2")
-    LABEL_COLOR = QColor("#555555")
+    BACKGROUND_COLOR = QColor("#F9DFE4")
+    PLOT_BACKGROUND_COLOR = QColor("#F7E2E5")
+    PLOT_BORDER_COLOR = QColor("#B8B8B8")
+
+    Y_LABEL_BACKGROUND_COLOR = QColor("#FAFAFA")
+    Y_LABEL_TEXT_COLOR = QColor("#4A4A4A")
+
+    TOOLTIP_BACKGROUND_COLOR = QColor("#FFFFFF")
+    TOOLTIP_BORDER_COLOR = QColor("#BDBDBD")
+    TOOLTIP_TEXT_COLOR = QColor("#303030")
+    TOOLTIP_SHADOW_COLOR = QColor(0, 0, 0, 55)
 
     def __init__(
         self,
@@ -156,65 +68,67 @@ class MixedTimeSeriesChart(QWidget):
         super().__init__(parent)
 
         self.setObjectName("chartContainer")
-        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setMinimumSize(700, 400)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self.setMouseTracking(True)
-        self.setMinimumSize(640, 360)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self.area_data = self._normalize_data(area_data)
-        self.spline_data = self._normalize_data(spline_data)
-        self.line_data = self._normalize_data(line_data)
-        self.bar_data = self._normalize_data(bar_data)
+        self.area_data = self._normalize(area_data)
+        self.spline_data = self._normalize(spline_data)
+        self.line_data = self._normalize(line_data)
+        self.bar_data = self._normalize(bar_data)
 
-        self._validate_data()
+        self._validate()
 
-        self.hover_index: int | None = None
         self._plot_rect = QRectF()
-
-        self.tooltip = ChartTooltip(self)
-        self.tooltip.hide()
+        self._hover_index = -1
 
     @staticmethod
-    def _normalize_data(
-        data: Sequence[TimePoint | tuple[datetime, float]],
+    def _normalize(
+        values: Sequence[TimePoint | tuple[datetime, float]],
     ) -> list[TimePoint]:
-        normalized: list[TimePoint] = []
+        result: list[TimePoint] = []
 
-        for point in data:
-            if isinstance(point, TimePoint):
-                normalized.append(point)
+        for item in values:
+            if isinstance(item, TimePoint):
+                result.append(item)
             else:
-                timestamp, value = point
-                normalized.append(TimePoint(timestamp, float(value)))
+                timestamp, value = item
+                result.append(TimePoint(timestamp, float(value)))
 
-        return sorted(normalized, key=lambda item: item.time)
+        return sorted(result, key=lambda point: point.time)
 
-    def _validate_data(self) -> None:
-        all_series = (
+    def _validate(self) -> None:
+        sequences = (
             self.area_data,
             self.spline_data,
             self.line_data,
             self.bar_data,
         )
 
-        if not all(all_series):
-            raise ValueError("Все четыре time-series должны содержать данные.")
+        if not all(sequences):
+            raise ValueError(
+                "Все четыре последовательности должны содержать данные."
+            )
 
-        lengths = {len(series) for series in all_series}
+        lengths = {len(sequence) for sequence in sequences}
 
         if len(lengths) != 1:
             raise ValueError(
-                "Все time-series должны иметь одинаковое количество точек."
+                "Все последовательности должны иметь одинаковую длину."
             )
 
-        expected_times = [point.time for point in self.area_data]
+        timestamps = [point.time for point in self.area_data]
 
-        for series in all_series[1:]:
-            current_times = [point.time for point in series]
+        for sequence in sequences[1:]:
+            current_timestamps = [point.time for point in sequence]
 
-            if current_times != expected_times:
+            if current_timestamps != timestamps:
                 raise ValueError(
-                    "Timestamps всех четырёх time-series должны совпадать."
+                    "Временные метки во всех последовательностях "
+                    "должны совпадать."
                 )
 
     def set_data(
@@ -224,19 +138,29 @@ class MixedTimeSeriesChart(QWidget):
         line_data: Sequence[TimePoint | tuple[datetime, float]],
         bar_data: Sequence[TimePoint | tuple[datetime, float]],
     ) -> None:
-        """Заменяет данные и запрашивает перерисовку графика."""
-        self.area_data = self._normalize_data(area_data)
-        self.spline_data = self._normalize_data(spline_data)
-        self.line_data = self._normalize_data(line_data)
-        self.bar_data = self._normalize_data(bar_data)
+        """Заменяет данные и запускает перерисовку."""
+        self.area_data = self._normalize(area_data)
+        self.spline_data = self._normalize(spline_data)
+        self.line_data = self._normalize(line_data)
+        self.bar_data = self._normalize(bar_data)
 
-        self._validate_data()
+        self._validate()
 
-        self.hover_index = None
-        self.tooltip.hide()
+        self._hover_index = -1
         self.update()
 
-    def _value_range(self) -> tuple[float, float]:
+    def _plot_area(self) -> QRectF:
+        left = 78.0
+        top = 28.0
+        right = 28.0
+        bottom = 28.0
+
+        width = max(10.0, float(self.width()) - left - right)
+        height = max(10.0, float(self.height()) - top - bottom)
+
+        return QRectF(left, top, width, height)
+
+    def _range_y(self) -> tuple[float, float]:
         values = [
             point.value
             for series in (
@@ -248,266 +172,136 @@ class MixedTimeSeriesChart(QWidget):
             for point in series
         ]
 
-        minimum = min(0.0, min(values))
-        maximum = max(values)
+        low = min(0.0, min(values))
+        high = max(values)
 
-        if maximum == minimum:
-            maximum += 1.0
+        if high <= low:
+            high = low + 1.0
 
-        padding = (maximum - minimum) * 0.12
+        padding = (high - low) * 0.12
 
-        return minimum - padding * 0.20, maximum + padding
-
-    def _make_plot_rect(self) -> QRectF:
-        """
-        Внутреннее поле графика.
-
-        Слева оставляется место для Y-подписей,
-        снизу — для дат по оси X.
-        """
-        left = 68
-        top = 28
-        right = 30
-        bottom = 54
-
-        return QRectF(
-            left,
-            top,
-            max(1, self.width() - left - right),
-            max(1, self.height() - top - bottom),
+        return (
+            low - padding * 0.05,
+            high + padding,
         )
 
-    def _x_for_index(self, index: int, rect: QRectF) -> float:
+    def _x(self, index: int) -> float:
         count = len(self.area_data)
 
         if count <= 1:
-            return rect.center().x()
+            return self._plot_rect.center().x()
 
-        return rect.left() + rect.width() * index / (count - 1)
+        return (
+            self._plot_rect.left()
+            + self._plot_rect.width() * index / float(count - 1)
+        )
 
-    @staticmethod
-    def _y_for_value(
-        value: float,
-        minimum: float,
-        maximum: float,
-        rect: QRectF,
-    ) -> float:
-        ratio = (value - minimum) / (maximum - minimum)
-        return rect.bottom() - ratio * rect.height()
+    def _y(self, value: float, low: float, high: float) -> float:
+        if high <= low:
+            return self._plot_rect.center().y()
 
-    def _points_for_series(
+        ratio = (value - low) / (high - low)
+
+        return self._plot_rect.bottom() - ratio * self._plot_rect.height()
+
+    def _series_points(
         self,
-        data: Sequence[TimePoint],
-        rect: QRectF,
-        minimum: float,
-        maximum: float,
+        series: Sequence[TimePoint],
+        low: float,
+        high: float,
     ) -> list[QPointF]:
         return [
             QPointF(
-                self._x_for_index(index, rect),
-                self._y_for_value(point.value, minimum, maximum, rect),
+                self._x(index),
+                self._y(point.value, low, high),
             )
-            for index, point in enumerate(data)
+            for index, point in enumerate(series)
         ]
 
     def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
 
-        self._plot_rect = self._make_plot_rect()
-        minimum, maximum = self._value_range()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.fillRect(self.rect(), self.BACKGROUND_COLOR)
 
-        self._draw_plot_background(painter, self._plot_rect)
-        self._draw_grid_and_y_axis(
-            painter,
-            self._plot_rect,
-            minimum,
-            maximum,
-        )
-        self._draw_x_labels(painter, self._plot_rect)
+            self._plot_rect = self._plot_area()
+            low, high = self._range_y()
 
-        area_points = self._points_for_series(
-            self.area_data,
-            self._plot_rect,
-            minimum,
-            maximum,
-        )
-        spline_points = self._points_for_series(
-            self.spline_data,
-            self._plot_rect,
-            minimum,
-            maximum,
-        )
-        line_points = self._points_for_series(
-            self.line_data,
-            self._plot_rect,
-            minimum,
-            maximum,
-        )
-        bar_points = self._points_for_series(
-            self.bar_data,
-            self._plot_rect,
-            minimum,
-            maximum,
-        )
+            self._draw_plot_background(painter)
+            self._draw_y_labels(painter, low, high)
 
-        self._draw_area(painter, area_points, self._plot_rect)
-        self._draw_bars(
-            painter,
-            bar_points,
-            self._plot_rect,
-            minimum,
-            maximum,
-        )
-        self._draw_spline(painter, spline_points)
-        self._draw_line(painter, line_points)
+            area_points = self._series_points(self.area_data, low, high)
+            spline_points = self._series_points(self.spline_data, low, high)
+            line_points = self._series_points(self.line_data, low, high)
+            bar_points = self._series_points(self.bar_data, low, high)
 
-        if self.hover_index is not None:
-            self._draw_hover_indicator(
-                painter,
-                self.hover_index,
-                self._plot_rect,
-            )
+            self._draw_cost_area(painter, area_points)
+            self._draw_cpa_bars(painter, bar_points, low, high)
+            self._draw_roi_spline(painter, spline_points)
+            self._draw_conversions_line(painter, line_points)
 
-    def _draw_plot_background(
-        self,
-        painter: QPainter,
-        rect: QRectF,
-    ) -> None:
+            if self._hover_index >= 0:
+                self._draw_hover_line(painter)
+                self._draw_tooltip(painter, low, high)
+
+        finally:
+            painter.end()
+
+    def _draw_plot_background(self, painter: QPainter) -> None:
         painter.save()
 
-        painter.setPen(QPen(QColor("#B8B8B8"), 1))
-        painter.setBrush(QBrush(self.PLOT_BACKGROUND))
-        painter.drawRect(rect)
+        painter.setPen(QPen(self.PLOT_BORDER_COLOR, 1))
+        painter.setBrush(QBrush(self.PLOT_BACKGROUND_COLOR))
+        painter.drawRect(self._plot_rect)
 
         painter.restore()
 
-    def _draw_grid_and_y_axis(
+    def _draw_y_labels(
         self,
         painter: QPainter,
-        rect: QRectF,
-        minimum: float,
-        maximum: float,
+        low: float,
+        high: float,
     ) -> None:
+        """
+        Белые карточки Y-значений слева.
+        Без X-подписей, осей и горизонтальной сетки.
+        """
         painter.save()
 
-        tick_count = 6
-        font = QFont("Arial", 10)
-        painter.setFont(font)
+        label_width = 58.0
+        label_height = 32.0
+        label_x = 4.0
+        ticks = 6
 
-        grid_pen = QPen(self.GRID_COLOR, 1)
-        grid_pen.setStyle(Qt.DotLine)
+        painter.setFont(QFont("Arial", 10))
 
-        axis_pen = QPen(self.AXIS_COLOR, 1)
-        label_pen = QPen(self.LABEL_COLOR)
+        for i in range(ticks):
+            ratio = i / float(ticks - 1)
+            y = self._plot_rect.bottom() - ratio * self._plot_rect.height()
+            value = low + ratio * (high - low)
 
-        for index in range(tick_count):
-            ratio = index / (tick_count - 1)
-            y = rect.bottom() - ratio * rect.height()
-            value = minimum + ratio * (maximum - minimum)
-
-            painter.setPen(grid_pen)
-            painter.drawLine(
-                QPointF(rect.left(), y),
-                QPointF(rect.right(), y),
+            label_rect = QRectF(
+                label_x,
+                y - label_height / 2.0,
+                label_width,
+                label_height,
             )
 
-            painter.setPen(label_pen)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(self.Y_LABEL_BACKGROUND_COLOR))
+            painter.drawRect(label_rect)
 
-            text_rect = QRectF(
-                4,
-                y - 12,
-                rect.left() - 12,
-                24,
-            )
-
+            painter.setPen(QPen(self.Y_LABEL_TEXT_COLOR))
             painter.drawText(
-                text_rect,
-                Qt.AlignRight | Qt.AlignVCenter,
+                label_rect.adjusted(2.0, 0.0, -5.0, 0.0),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 f"{value:.0f}",
             )
 
-        painter.setPen(axis_pen)
-        painter.drawLine(
-            QPointF(rect.left(), rect.top()),
-            QPointF(rect.left(), rect.bottom()),
-        )
-        painter.drawLine(
-            QPointF(rect.left(), rect.bottom()),
-            QPointF(rect.right(), rect.bottom()),
-        )
-
         painter.restore()
 
-    def _draw_x_labels(
-        self,
-        painter: QPainter,
-        rect: QRectF,
-    ) -> None:
-        painter.save()
-
-        painter.setPen(QPen(self.LABEL_COLOR))
-        painter.setFont(QFont("Arial", 10))
-
-        count = len(self.area_data)
-
-        if count <= 8:
-            indexes = list(range(count))
-        else:
-            step = max(1, count // 7)
-            indexes = list(range(0, count, step))
-
-            if indexes[-1] != count - 1:
-                indexes.append(count - 1)
-
-        for index in indexes:
-            x = self._x_for_index(index, rect)
-
-            label_rect = QRectF(
-                x - 34,
-                rect.bottom() + 8,
-                68,
-                24,
-            )
-
-            painter.drawText(
-                label_rect,
-                Qt.AlignCenter,
-                self.area_data[index].time.strftime("%d.%m"),
-            )
-
-        painter.restore()
-
-    def _draw_area(
-        self,
-        painter: QPainter,
-        points: list[QPointF],
-        rect: QRectF,
-    ) -> None:
-        if not points:
-            return
-
-        painter.save()
-
-        path = QPainterPath()
-        path.moveTo(points[0])
-
-        for point in points[1:]:
-            path.lineTo(point)
-
-        path.lineTo(QPointF(points[-1].x(), rect.bottom()))
-        path.lineTo(QPointF(points[0].x(), rect.bottom()))
-        path.closeSubpath()
-
-        painter.setPen(QPen(self.AREA_COLOR.darker(112), 1.5))
-        painter.setBrush(QBrush(QColor(247, 233, 139, 125)))
-        painter.drawPath(path)
-
-        painter.restore()
-
-    def _draw_spline(
+    def _draw_cost_area(
         self,
         painter: QPainter,
         points: list[QPointF],
@@ -520,40 +314,111 @@ class MixedTimeSeriesChart(QWidget):
         path = QPainterPath()
         path.moveTo(points[0])
 
-        if len(points) == 2:
-            path.lineTo(points[1])
-        else:
-            for index in range(len(points) - 1):
-                current = points[index]
-                next_point = points[index + 1]
+        for point in points[1:]:
+            path.lineTo(point)
 
-                control_1 = QPointF(
-                    current.x() + (next_point.x() - current.x()) * 0.45,
-                    current.y(),
-                )
-                control_2 = QPointF(
-                    current.x() + (next_point.x() - current.x()) * 0.55,
-                    next_point.y(),
-                )
+        path.lineTo(
+            QPointF(points[-1].x(), self._plot_rect.bottom())
+        )
+        path.lineTo(
+            QPointF(points[0].x(), self._plot_rect.bottom())
+        )
+        path.closeSubpath()
 
-                path.cubicTo(control_1, control_2, next_point)
-
-        pen = QPen(self.SPLINE_COLOR, 2.4)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor("#E4D675"), 1.5))
+        painter.setBrush(QBrush(QColor(247, 233, 139, 125)))
         painter.drawPath(path)
 
         painter.restore()
 
-    def _draw_line(
+    def _draw_cpa_bars(
+        self,
+        painter: QPainter,
+        points: list[QPointF],
+        low: float,
+        high: float,
+    ) -> None:
+        if not points:
+            return
+
+        painter.save()
+
+        point_count = len(points)
+
+        if point_count > 1:
+            spacing = self._plot_rect.width() / float(point_count - 1)
+            bar_width = min(16.0, max(5.0, spacing * 0.22))
+        else:
+            bar_width = 14.0
+
+        baseline_y = self._y(0.0, low, high)
+
+        painter.setPen(QPen(QColor("#2457C2"), 1))
+        painter.setBrush(QBrush(self.CPA_COLOR))
+
+        for point in points:
+            top = min(point.y(), baseline_y)
+            height = max(1.0, abs(point.y() - baseline_y))
+
+            painter.drawRoundedRect(
+                QRectF(
+                    point.x() - bar_width / 2.0,
+                    top,
+                    bar_width,
+                    height,
+                ),
+                2.0,
+                2.0,
+            )
+
+        painter.restore()
+
+    def _draw_roi_spline(
         self,
         painter: QPainter,
         points: list[QPointF],
     ) -> None:
-        if not points:
+        if len(points) < 2:
+            return
+
+        painter.save()
+
+        path = QPainterPath()
+        path.moveTo(points[0])
+
+        for index in range(len(points) - 1):
+            current = points[index]
+            next_point = points[index + 1]
+            dx = next_point.x() - current.x()
+
+            control_1 = QPointF(
+                current.x() + dx * 0.45,
+                current.y(),
+            )
+
+            control_2 = QPointF(
+                current.x() + dx * 0.55,
+                next_point.y(),
+            )
+
+            path.cubicTo(control_1, control_2, next_point)
+
+        pen = QPen(self.ROI_COLOR, 2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+
+        painter.setPen(pen)
+        painter.setBrush(QBrush())
+        painter.drawPath(path)
+
+        painter.restore()
+
+    def _draw_conversions_line(
+        self,
+        painter: QPainter,
+        points: list[QPointF],
+    ) -> None:
+        if len(points) < 2:
             return
 
         painter.save()
@@ -564,24 +429,24 @@ class MixedTimeSeriesChart(QWidget):
         for point in points[1:]:
             path.lineTo(point)
 
-        pen = QPen(self.LINE_COLOR, 2.2)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
+        pen = QPen(self.CONVERSIONS_COLOR, 2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
 
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(QBrush())
         painter.drawPath(path)
 
-        painter.setPen(QPen(self.LINE_COLOR, 1))
-        painter.setBrush(QBrush(self.LINE_COLOR))
+        marker_size = 8.0
 
-        marker_size = 7.5
+        painter.setPen(QPen(self.CONVERSIONS_COLOR, 1))
+        painter.setBrush(QBrush(self.CONVERSIONS_COLOR))
 
         for point in points:
             painter.drawRect(
                 QRectF(
-                    point.x() - marker_size / 2,
-                    point.y() - marker_size / 2,
+                    point.x() - marker_size / 2.0,
+                    point.y() - marker_size / 2.0,
                     marker_size,
                     marker_size,
                 )
@@ -589,129 +454,207 @@ class MixedTimeSeriesChart(QWidget):
 
         painter.restore()
 
-    def _draw_bars(
+    def _draw_hover_line(self, painter: QPainter) -> None:
+        x = self._x(self._hover_index)
+
+        painter.save()
+
+        pen = QPen(QColor(70, 70, 70, 105), 1)
+        pen.setStyle(Qt.PenStyle.DashLine)
+
+        painter.setPen(pen)
+        painter.drawLine(
+            QPointF(x, self._plot_rect.top()),
+            QPointF(x, self._plot_rect.bottom()),
+        )
+
+        painter.restore()
+
+    def _tooltip_rect(self) -> QRectF:
+        """
+        Вычисляет положение tooltip.
+
+        Карточка будет справа от курсора. Если справа мало места,
+        она появится слева от текущей точки.
+        """
+        tooltip_width = 315.0
+        tooltip_height = 154.0
+
+        point_x = self._x(self._hover_index)
+        point_y = self._plot_rect.top() + 12.0
+
+        x = point_x + 16.0
+        y = point_y
+
+        if x + tooltip_width > self.width() - 8.0:
+            x = point_x - tooltip_width - 16.0
+
+        x = max(8.0, x)
+        y = max(8.0, y)
+
+        if y + tooltip_height > self.height() - 8.0:
+            y = self.height() - tooltip_height - 8.0
+
+        return QRectF(x, y, tooltip_width, tooltip_height)
+
+    def _draw_tooltip(
         self,
         painter: QPainter,
-        points: list[QPointF],
-        rect: QRectF,
-        minimum: float,
-        maximum: float,
+        low: float,
+        high: float,
     ) -> None:
-        if not points:
+        if self._hover_index < 0:
             return
 
+        cost_point = self.area_data[self._hover_index]
+        cpa_point = self.bar_data[self._hover_index]
+        roi_point = self.spline_data[self._hover_index]
+        conversions_point = self.line_data[self._hover_index]
+
+        tooltip_rect = self._tooltip_rect()
+
         painter.save()
 
-        count = len(points)
+        shadow_rect = tooltip_rect.translated(3.0, 4.0)
 
-        if count > 1:
-            spacing = rect.width() / (count - 1)
-            bar_width = max(4.0, min(16.0, spacing * 0.28))
-        else:
-            bar_width = 14.0
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.TOOLTIP_SHADOW_COLOR))
+        painter.drawRoundedRect(shadow_rect, 7.0, 7.0)
 
-        baseline_y = self._y_for_value(
-            0.0,
-            minimum,
-            maximum,
-            rect,
+        painter.setPen(QPen(self.TOOLTIP_BORDER_COLOR, 1))
+        painter.setBrush(QBrush(self.TOOLTIP_BACKGROUND_COLOR))
+        painter.drawRoundedRect(tooltip_rect, 7.0, 7.0)
+
+        left = tooltip_rect.left() + 15.0
+        y = tooltip_rect.top() + 29.0
+
+        date_font = QFont("Arial", 16)
+        painter.setFont(date_font)
+        painter.setPen(QPen(self.TOOLTIP_TEXT_COLOR))
+
+        painter.drawText(
+            QPointF(left, y),
+            cost_point.time.strftime("%d.%m.%Y"),
         )
 
-        painter.setPen(QPen(self.BAR_COLOR.darker(110), 1))
-        painter.setBrush(QBrush(self.BAR_COLOR))
+        y += 29.0
 
-        for point in points:
-            top = min(point.y(), baseline_y)
-            height = abs(baseline_y - point.y())
+        self._draw_tooltip_row(
+            painter=painter,
+            x=left,
+            y=y,
+            color=self.COST_COLOR,
+            label="Cost:",
+            value=cost_point.value,
+        )
 
-            painter.drawRoundedRect(
-                QRectF(
-                    point.x() - bar_width / 2,
-                    top,
-                    bar_width,
-                    max(height, 1.0),
-                ),
-                2.0,
-                2.0,
-            )
+        y += 27.0
+
+        self._draw_tooltip_row(
+            painter=painter,
+            x=left,
+            y=y,
+            color=self.CPA_COLOR,
+            label="CPA:",
+            value=cpa_point.value,
+        )
+
+        y += 27.0
+
+        self._draw_tooltip_row(
+            painter=painter,
+            x=left,
+            y=y,
+            color=self.ROI_COLOR,
+            label="ROI Confirmed:",
+            value=roi_point.value,
+        )
+
+        y += 27.0
+
+        self._draw_tooltip_row(
+            painter=painter,
+            x=left,
+            y=y,
+            color=self.CONVERSIONS_COLOR,
+            label="Covertions:",
+            value=conversions_point.value,
+        )
 
         painter.restore()
 
-    def _draw_hover_indicator(
-        self,
+    @staticmethod
+    def _draw_tooltip_row(
         painter: QPainter,
-        index: int,
-        rect: QRectF,
+        x: float,
+        y: float,
+        color: QColor,
+        label: str,
+        value: float,
     ) -> None:
-        painter.save()
+        """Рисует цветную точку, название показателя и жирное значение."""
+        dot_radius = 7.0
 
-        x = self._x_for_index(index, rect)
-
-        guide_pen = QPen(QColor(70, 70, 70, 90), 1)
-        guide_pen.setStyle(Qt.DashLine)
-
-        painter.setPen(guide_pen)
-        painter.drawLine(
-            QPointF(x, rect.top()),
-            QPointF(x, rect.bottom()),
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(color))
+        painter.drawEllipse(
+            QPointF(x + dot_radius, y - dot_radius + 1.0),
+            dot_radius,
+            dot_radius,
         )
 
-        painter.restore()
+        label_font = QFont("Arial", 16)
+        painter.setFont(label_font)
+        painter.setPen(QPen(QColor("#303030")))
+
+        text_x = x + 24.0
+        painter.drawText(
+            QPointF(text_x, y + 5.0),
+            f"{label} ",
+        )
+
+        metrics = QFontMetrics(label_font)
+        value_x = text_x + metrics.horizontalAdvance(f"{label} ")
+
+        value_font = QFont("Arial", 16)
+        value_font.setBold(True)
+
+        painter.setFont(value_font)
+        painter.drawText(
+            QPointF(value_x, y + 5.0),
+            f"{value:.2f}",
+        )
 
     def mouseMoveEvent(self, event) -> None:
-        if not self._plot_rect.contains(event.position()):
-            self.hover_index = None
-            self.tooltip.hide()
-            self.update()
+        mouse_position = event.position()
+
+        if not self._plot_rect.contains(mouse_position):
+            if self._hover_index != -1:
+                self._hover_index = -1
+                self.update()
+
             return
 
         count = len(self.area_data)
 
         if count == 1:
-            nearest_index = 0
+            index = 0
         else:
-            relative_x = event.position().x() - self._plot_rect.left()
-            fraction = relative_x / self._plot_rect.width()
+            fraction = (
+                (mouse_position.x() - self._plot_rect.left())
+                / self._plot_rect.width()
+            )
 
-            nearest_index = int(round(fraction * (count - 1)))
-            nearest_index = max(0, min(nearest_index, count - 1))
+            index = int(round(fraction * (count - 1)))
+            index = max(0, min(index, count - 1))
 
-        if self.hover_index != nearest_index:
-            self.hover_index = nearest_index
-            self._show_tooltip(nearest_index)
+        if index != self._hover_index:
+            self._hover_index = index
             self.update()
 
     def leaveEvent(self, event) -> None:
-        self.hover_index = None
-        self.tooltip.hide()
-        self.update()
+        if self._hover_index != -1:
+            self._hover_index = -1
+            self.update()
+
         super().leaveEvent(event)
-
-    def _show_tooltip(self, index: int) -> None:
-        area_point = self.area_data[index]
-        spline_point = self.spline_data[index]
-        line_point = self.line_data[index]
-        bar_point = self.bar_data[index]
-
-        self.tooltip.set_values(
-            timestamp=area_point.time,
-            area_value=area_point.value,
-            spline_value=spline_point.value,
-            line_value=line_point.value,
-            bar_value=bar_point.value,
-        )
-
-        x = int(self._x_for_index(index, self._plot_rect) + 16)
-        y = int(self._plot_rect.top() + 12)
-
-        x = max(8, x)
-        y = max(8, y)
-
-        x = min(
-            x,
-            self.width() - self.tooltip.width() - 8,
-        )
-
-        self.tooltip.move(x, y)
-        self.tooltip.show()
-        self.tooltip.raise_()
