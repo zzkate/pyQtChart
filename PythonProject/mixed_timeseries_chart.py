@@ -61,12 +61,16 @@ class MixedTimeSeriesChart(QWidget):
     PLOT_BACKGROUND_COLOR = QColor("#F7E2E5")
     PLOT_BORDER_COLOR = QColor("#B8B8B8")
 
+    # Цвета поверхностей графика.
+    NORMAL_SURFACE_COLOR = QColor("#FCECEF")
+    HOVER_SURFACE_COLOR = QColor("#F9DFE4")
+
     SIDEBAR_BACKGROUND_COLOR = QColor("#F7DDE2")
     SIDEBAR_TITLE_BACKGROUND = QColor("#FDFDFD")
 
     # Серый фон для «белых» ячеек под Tdy.
     # Он заметно темнее чистого белого.
-    SIDEBAR_CELL_WHITE = QColor("#F0F0F0")
+    SIDEBAR_CELL_WHITE = QColor("#FAF6F3")
 
     # Розовые ячейки совпадают с основным фоном.
     SIDEBAR_CELL_PINK = QColor("#F9DFE4")
@@ -122,11 +126,12 @@ class MixedTimeSeriesChart(QWidget):
         self._validate()
         self._background_color = QColor("#F9DFE4")
 
-        # Начальное, светлое состояние.
-        # ChartPanel меняет их через set_surface_color().
-        self._background_color = QColor("#FCECEF")
-        self._plot_background_color = QColor("#FCECEF")
-        self._sidebar_pink_color = QColor("#FCECEF")
+        # Начальное состояние: курсор находится вне графика.
+        self._background_color = QColor(self.NORMAL_SURFACE_COLOR)
+        self._plot_background_color = QColor(self.NORMAL_SURFACE_COLOR)
+        self._sidebar_pink_color = QColor(self.NORMAL_SURFACE_COLOR)
+
+        self._is_chart_hovered = False
 
         self._plot_rect = QRectF()
         self._hover_index = -1
@@ -239,6 +244,28 @@ class MixedTimeSeriesChart(QWidget):
         self._sidebar_pink_color = new_color
 
         self.update()
+
+    def _set_chart_hovered(self, hovered: bool) -> None:
+        """
+        Меняет все розовые поверхности графика при наведении.
+
+        Не меняет:
+        - белые ячейки под Tdy;
+        - белую карточку Tdy;
+        - tooltip.
+        """
+        if hovered == self._is_chart_hovered:
+            return
+
+        self._is_chart_hovered = hovered
+
+        color = (
+            self.HOVER_SURFACE_COLOR
+            if hovered
+            else self.NORMAL_SURFACE_COLOR
+        )
+
+        self.set_surface_color(color)
 
     def set_background_color(self, color: str) -> None:
         """
@@ -1078,6 +1105,10 @@ class MixedTimeSeriesChart(QWidget):
             text_value,
         )
 
+    def enterEvent(self, event) -> None:
+        self._set_chart_hovered(True)
+        super().enterEvent(event)
+
     def mouseMoveEvent(self, event) -> None:
         position = event.position()
 
@@ -1127,6 +1158,7 @@ class MixedTimeSeriesChart(QWidget):
             self.update()
 
     def leaveEvent(self, event) -> None:
+        self._set_chart_hovered(False)
         changed = False
 
         if self._hover_index != -1:

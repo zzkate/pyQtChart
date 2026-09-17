@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from mixed_timeseries_chart import MixedTimeSeriesChart, TimePoint
@@ -20,14 +20,6 @@ class ChartPanel(QWidget):
 
     # Серо-голубой фон родительского контейнера.
     PARENT_BACKGROUND = "#E2EDF9"
-
-    # Когда курсор ВНЕ области ChartPanel:
-    # светлый розовый фон дочернего графика.
-    NORMAL_CHART_BACKGROUND = "#FCECEF"
-
-    # Когда курсор ВНУТРИ области ChartPanel:
-    # более тёмный розовый фон дочернего графика.
-    HOVER_CHART_BACKGROUND = "#F9DFE4"
 
     def __init__(
         self,
@@ -48,7 +40,6 @@ class ChartPanel(QWidget):
             "padding: 0px;"
             "}"
         )
-        self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self.chart = MixedTimeSeriesChart(
@@ -58,8 +49,6 @@ class ChartPanel(QWidget):
             bar_data=bar_data,
             parent=self,
         )
-
-        self.chart.setMouseTracking(True)
 
         layout = QVBoxLayout(self)
 
@@ -71,59 +60,3 @@ class ChartPanel(QWidget):
         layout.setSpacing(0)
 
         layout.addWidget(self.chart)
-
-        # Нужно отслеживать события как самого контейнера,
-        # так и child chart. Иначе при перемещении курсора
-        # над дочерним графиком родитель может не получать
-        # нужные hover-события.
-        self.installEventFilter(self)
-        self.chart.installEventFilter(self)
-
-        self._set_chart_hovered(False)
-
-    def _set_chart_hovered(self, hovered: bool) -> None:
-        """
-        Синхронно меняет все розовые области дочернего графика.
-
-        hovered=False:
-            светлый розовый фон.
-
-        hovered=True:
-            более тёмный розовый фон.
-        """
-        color = (
-            self.HOVER_CHART_BACKGROUND
-            if hovered
-            else self.NORMAL_CHART_BACKGROUND
-        )
-
-        self.chart.set_surface_color(color)
-
-    def enterEvent(self, event) -> None:
-        self._set_chart_hovered(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self._set_chart_hovered(False)
-        super().leaveEvent(event)
-
-    def eventFilter(self, watched, event) -> bool:
-        """
-        Поддерживает состояние фона, когда курсор находится
-        над дочерним графиком либо над свободным полем родителя.
-        """
-        if watched is self or watched is self.chart:
-            if event.type() == QEvent.Type.Enter:
-                self._set_chart_hovered(True)
-
-            elif event.type() == QEvent.Type.Leave:
-                cursor_inside_parent = self.rect().contains(
-                    self.mapFromGlobal(
-                        self.cursor().pos()
-                    )
-                )
-
-                if not cursor_inside_parent:
-                    self._set_chart_hovered(False)
-
-        return super().eventFilter(watched, event)
