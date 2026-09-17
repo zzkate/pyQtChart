@@ -9,3 +9,5 @@ pip install -r requirements.txt
 запуск
 
 ./.venv/bin/python main.py
+
+ для загрузки своих данных в график поменяйте соответсвующие json файлы в папке data перед запуском
