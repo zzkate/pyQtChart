@@ -101,7 +101,7 @@ class DemoWindow(QMainWindow):
 
         # Геометрия рамки в координатах MixedTimeSeriesChart.
         plot_left = 112
-        plot_top = 95
+        plot_top = 19
         plot_right_margin = 98
 
         # Координаты верхнего левого угла chart

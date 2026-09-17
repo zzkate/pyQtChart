@@ -314,15 +314,15 @@ class MixedTimeSeriesChart(QWidget):
         return QRectF(
             0.0,
             0.0,
-            74.0,
+            56.0,
             float(self.height()),
         )
 
     def _plot_area(self) -> QRectF:
-        left = 112.0
-        top = 95.0
-        right = 98.0
-        bottom = 112.0
+        left = 155.0
+        top = 19.0
+        right = 148.0
+        bottom = 137.0
 
         width = max(10.0, float(self.width()) - left - right)
         height = max(10.0, float(self.height()) - top - bottom)
@@ -463,7 +463,7 @@ class MixedTimeSeriesChart(QWidget):
         x = sidebar.left()
         width = sidebar.width()
 
-        start_y = 95.0
+        start_y = 19.0
         title_height = 58.0
         cell_height = 46.0
 
@@ -472,7 +472,7 @@ class MixedTimeSeriesChart(QWidget):
         painter.setBrush(QBrush(self.SIDEBAR_TITLE_BACKGROUND))
         painter.drawRect(title_rect)
 
-        title_font = QFont("Arial", 18)
+        title_font = QFont("Arial", 14, QFont.Weight.Bold)
         title_font.setBold(True)
 
         painter.setPen(QPen(self.SIDEBAR_TITLE_COLOR))
@@ -486,7 +486,7 @@ class MixedTimeSeriesChart(QWidget):
 
         values = ["0%", "$0", "$0", "0", "0", "—"]
 
-        value_font = QFont("Arial", 16)
+        value_font = QFont("Roboto Regular", 16)
         painter.setFont(value_font)
 
         current_y = start_y + title_height
@@ -517,7 +517,7 @@ class MixedTimeSeriesChart(QWidget):
 
             painter.setPen(QPen(self.SIDEBAR_TEXT_COLOR))
             painter.drawText(
-                cell_rect.adjusted(5.0, 0.0, -10.0, 0.0),
+                cell_rect.adjusted(5.0, 0.0, -6.0, 0.0),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 value,
             )
@@ -1073,7 +1073,7 @@ class MixedTimeSeriesChart(QWidget):
             dot_radius,
         )
 
-        label_font = QFont("Arial", 16)
+        label_font = QFont("Arial Black", 16, QFont.Weight.Black)
 
         painter.setFont(label_font)
         painter.setPen(QPen(QColor("#303030")))
@@ -1089,7 +1089,7 @@ class MixedTimeSeriesChart(QWidget):
         metrics = QFontMetrics(label_font)
         value_x = label_x + metrics.horizontalAdvance(label_text)
 
-        value_font = QFont("Arial", 16)
+        value_font = QFont("Arial", 14)
         value_font.setBold(True)
 
         painter.setFont(value_font)
